@@ -1,0 +1,12 @@
+{
+  "name": "Java Spring Boot",
+  "category": "backend",
+  "language": "java",
+  "toolchain": {
+    "build": "./mvnw clean package -DskipTests || ./gradlew build -x test",
+    "test": "./mvnw test || ./gradlew test",
+    "lint": "./mvnw spotless:check || ./gradlew spotlessCheck || echo 'No Spotless plugin — skip lint'",
+    "format": "./mvnw spotless:apply || ./gradlew spotlessApply || echo 'No Spotless plugin — skip format'"
+  },
+  "install_tools": "command -v java || echo \"ERROR: JDK not found\"; test -f ./mvnw -o -f ./gradlew || echo \"ERROR: No build wrapper found\""
+}

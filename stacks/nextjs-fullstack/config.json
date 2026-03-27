@@ -1,0 +1,13 @@
+{
+  "name": "Next.js Fullstack",
+  "category": "fullstack",
+  "language": "typescript",
+  "toolchain": {
+    "lint": "npx next lint",
+    "format": "npx prettier --write .",
+    "test": "npx vitest run",
+    "typecheck": "npx tsc --noEmit",
+    "build": "npx next build"
+  },
+  "install_tools": "npm i -D prettier vitest typescript next"
+}

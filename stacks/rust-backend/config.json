@@ -1,0 +1,12 @@
+{
+  "name": "Rust Backend",
+  "category": "backend",
+  "language": "rust",
+  "toolchain": {
+    "lint": "cargo clippy --all-targets --all-features -- -D warnings",
+    "format": "cargo fmt",
+    "test": "cargo test",
+    "build": "cargo build"
+  },
+  "install_tools": "command -v clippy-driver && command -v rustfmt || rustup component add clippy rustfmt"
+}

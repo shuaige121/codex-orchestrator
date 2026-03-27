@@ -1,0 +1,14 @@
+- **Runtime**: Cloudflare Workers V8 isolate — NO Node.js APIs (no `fs`, `path`, `process`, `Buffer`)
+- **Entry**: `export default { async fetch(request, env) {} }` — must be ES module
+- **Env bindings**: D1 (`env.DB`), KV (`env.KV`), R2 (`env.BUCKET`), secrets — NEVER hardcode secrets
+- **D1 usage**: `env.DB.prepare(sql).bind(...).run()` / `.first()` / `.all()` — use `?` placeholders
+- **Response**: Always return `new Response(body, { status, headers })` — no `res.send()`
+- **Fetch API**: Use standard `fetch()` for external HTTP — available globally
+- **Config**: `wrangler.toml` — `name`, `main`, `compatibility_date`, `[[d1_databases]]` bindings
+- **Limits**: 128MB memory, 30s CPU time (paid), 10ms CPU (free), 25MB script size
+- **CORS**: Handle `OPTIONS` preflight explicitly — no middleware system
+- **Routing**: Manual `url.pathname` matching or use itty-router — no Express
+- **Errors**: Wrap handler in try/catch — unhandled errors return 500 to client
+- **Crypto**: `crypto.randomUUID()`, `crypto.subtle` available — standard Web Crypto API
+- **JSON**: `JSON.stringify()` / `.parse()` — use `request.json()` to parse body
+- **金额单位**: 聚光 API 金额全部是分（fen），1元=100分，预算范围 [10000, 99999900) 分

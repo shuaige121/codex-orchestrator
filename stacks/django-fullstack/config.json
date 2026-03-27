@@ -1,0 +1,13 @@
+{
+  "name": "Django Fullstack",
+  "category": "fullstack",
+  "language": "python",
+  "toolchain": {
+    "lint": "ruff check --fix .",
+    "format": "ruff format .",
+    "test": "uv run pytest --cov --cov-report=term-missing",
+    "typecheck": "uv run mypy .",
+    "migrate": "uv run python manage.py makemigrations --check"
+  },
+  "install_tools": "uv tool install ruff && uv sync --frozen && uv add --dev pytest-cov"
+}

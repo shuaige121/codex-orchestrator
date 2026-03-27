@@ -1,0 +1,12 @@
+{
+  "name": "Cloudflare Workers (JavaScript)",
+  "category": "backend",
+  "language": "javascript",
+  "toolchain": {
+    "lint": "npx eslint src/",
+    "format": "npx prettier --write 'src/**/*.js'",
+    "test": "npx vitest run",
+    "build": "npx wrangler deploy --dry-run --outdir=dist"
+  },
+  "install_tools": "npm install"
+}

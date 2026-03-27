@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["status", "task_id", "owner", "note", "error_category", "files_modified", "verification"],
+  "additionalProperties": false,
+  "properties": {
+    "status":         { "type": "string", "enum": ["DONE", "FAILED"] },
+    "task_id":        { "type": "string" },
+    "owner":          { "type": "string" },
+    "note":           { "type": "string", "maxLength": 200 },
+    "error_category": { "type": "string", "enum": ["code_bug", "env_issue", "prompt_unclear", "dependency", "none"] },
+    "files_modified": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+    "verification": {
+      "type": "object",
+      "required": ["lint", "test", "build"],
+      "additionalProperties": false,
+      "properties": {
+        "lint":  { "type": "string", "enum": ["PASS", "FAIL", "SKIP"] },
+        "test":  { "type": "string", "enum": ["PASS", "FAIL", "SKIP"] },
+        "build": { "type": "string", "enum": ["PASS", "FAIL", "SKIP"] }
+      }
+    },
+    "suggested_fix": { "type": "string", "maxLength": 300 }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "Go Backend",
+  "category": "backend",
+  "language": "go",
+  "toolchain": {
+    "lint": "golangci-lint run ./...",
+    "format": "gofmt -w .",
+    "test": "go test -race ./...",
+    "build": "go build ./..."
+  },
+  "install_tools": "command -v golangci-lint || echo \"WARNING: golangci-lint not found, install it manually\""
+}

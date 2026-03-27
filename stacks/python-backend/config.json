@@ -1,0 +1,12 @@
+{
+  "name": "Python Backend",
+  "category": "backend",
+  "language": "python",
+  "toolchain": {
+    "lint": "ruff check --fix .",
+    "format": "ruff format .",
+    "test": "uv run pytest -xvs",
+    "typecheck": "pyright ."
+  },
+  "install_tools": "uv tool install ruff && uv tool install pyright"
+}

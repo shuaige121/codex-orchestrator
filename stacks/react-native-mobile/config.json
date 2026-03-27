@@ -1,0 +1,12 @@
+{
+  "name": "React Native Expo",
+  "category": "mobile",
+  "language": "typescript",
+  "toolchain": {
+    "lint": "npx expo lint",
+    "format": "npx prettier --write \"**/*.{ts,tsx}\"",
+    "typecheck": "npx tsc --noEmit",
+    "test": "npx jest --ci"
+  },
+  "install_tools": "npm i -D expo jest typescript prettier @types/jest"
+}

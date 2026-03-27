@@ -1,0 +1,12 @@
+{
+  "name": "JavaScript Backend (Node.js)",
+  "category": "backend",
+  "language": "javascript",
+  "toolchain": {
+    "lint": "npx eslint .",
+    "format": "npx prettier --write .",
+    "test": "npm test",
+    "build": "node -e 'console.log(\"no build step\")'"
+  },
+  "install_tools": "npm i -D eslint prettier"
+}

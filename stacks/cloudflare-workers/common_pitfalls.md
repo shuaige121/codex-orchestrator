@@ -1,0 +1,7 @@
+- ❌ `const fs = require('fs')` → Workers 没有 Node.js 模块
+- ❌ `process.env.SECRET` → 用 `env.SECRET`（fetch handler 第二个参数）
+- ❌ `res.json()` / `res.send()` → 用 `new Response(JSON.stringify(data))`
+- ❌ SQL 拼接 ``...${userId}...`` → 用 `.prepare('... WHERE id = ?').bind(userId)`
+- ❌ `setTimeout()` / `setInterval()` → Workers 没有定时器（用 Cron Triggers）
+- ❌ 未处理 OPTIONS preflight → CORS 失败
+- ❌ `wrangler.toml` 没有 `compatibility_date` → 部署失败

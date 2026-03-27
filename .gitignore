@@ -1,0 +1,15 @@
+# Run logs (may contain project source code)
+.claude_codex_runs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.models_cache.json
+
+# Plugin metadata (not part of this project)
+.claude-plugin/

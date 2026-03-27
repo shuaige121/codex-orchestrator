@@ -1,0 +1,13 @@
+{
+  "name": "TypeScript Frontend",
+  "category": "frontend",
+  "language": "typescript",
+  "toolchain": {
+    "lint": "npx eslint .",
+    "format": "npx prettier --write .",
+    "test": "npx vitest run",
+    "typecheck": "npx tsc --noEmit",
+    "build": "npx vite build"
+  },
+  "install_tools": "npm i -D eslint prettier vitest typescript"
+}

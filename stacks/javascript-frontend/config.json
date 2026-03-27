@@ -1,0 +1,12 @@
+{
+  "name": "JavaScript Frontend",
+  "category": "frontend",
+  "language": "javascript",
+  "toolchain": {
+    "lint": "npx eslint .",
+    "format": "npx prettier --write .",
+    "test": "npx vitest run",
+    "build": "npx vite build"
+  },
+  "install_tools": "npm i -D eslint prettier vitest"
+}

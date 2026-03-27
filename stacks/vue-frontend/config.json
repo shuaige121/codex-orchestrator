@@ -1,0 +1,13 @@
+{
+  "name": "Vue.js Frontend",
+  "category": "frontend",
+  "language": "typescript",
+  "toolchain": {
+    "lint": "npx eslint .",
+    "format": "npx prettier --write \"src/**/*.{vue,ts,tsx,css}\"",
+    "typecheck": "npx vue-tsc --build",
+    "test": "npx vitest run",
+    "build": "npx vite build"
+  },
+  "install_tools": "npm i -D eslint eslint-plugin-vue prettier vitest @vue/test-utils vue-tsc"
+}

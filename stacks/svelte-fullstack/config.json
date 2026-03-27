@@ -1,0 +1,13 @@
+{
+  "name": "SvelteKit Fullstack",
+  "category": "fullstack",
+  "language": "typescript",
+  "toolchain": {
+    "lint": "npx eslint .",
+    "format": "npx prettier --write .",
+    "typecheck": "npx svelte-check",
+    "test": "npx vitest run",
+    "build": "npx vite build"
+  },
+  "install_tools": "npm i -D eslint eslint-plugin-svelte prettier prettier-plugin-svelte vitest svelte-check"
+}
