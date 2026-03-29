@@ -67,9 +67,9 @@ EXECUTORS: dict[str, dict] = {
         "description": "Anthropic Claude Code CLI",
         "worker_cmd": (
             '{env_setup} timeout {timeout} claude '
-            '--dangerously-skip-permissions -C "{workspace}" {extra_flags} '
-            '--output-file "{output}" '
-            '-p "$(cat "{prompt}")"'
+            '--dangerously-skip-permissions --bare -C "{workspace}" {extra_flags} '
+            '-p "$(cat "{prompt}")" '
+            '> "{output}" 2>&1'
         ),
         "env_setup": 'TMPDIR={tmpdir}',
         "sandbox_mode": "none",
@@ -429,6 +429,10 @@ def cmd_setup(args: argparse.Namespace) -> None:
     logs_dir = run_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
+    # v3 directories
+    for subdir in ("prompts", "signals", "outputs"):
+        (run_dir / subdir).mkdir(parents=True, exist_ok=True)
+
     executors = ", ".join(f"codex-{i}" for i in range(1, max_workers + 1))
 
     state_file = Path.home() / ".claude" / "codex-orchestrator.local.md"
@@ -437,6 +441,9 @@ def cmd_setup(args: argparse.Namespace) -> None:
         f"- workspace: {workspace}\n"
         f"- run_dir: {run_dir}\n"
         f"- logs_dir: {logs_dir}\n"
+        f"- prompts_dir: {run_dir / 'prompts'}\n"
+        f"- signals_dir: {run_dir / 'signals'}\n"
+        f"- outputs_dir: {run_dir / 'outputs'}\n"
         f"- max_workers: {max_workers}\n"
         f"- max_batch: {max_batch}\n"
         f"- max_steps: {max_steps}\n"
@@ -1365,6 +1372,291 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
     print(f"\nTotal: {kept} kept, {removed} {'removed' if delete_all else 'cleaned'}")
 
 
+# ── v3 Signal protocol ──────────────────────────────────────────────────────
+
+SIGNAL_START = "---SIGNAL---"
+SIGNAL_END = "---END-SIGNAL---"
+
+
+def _extract_signal_from_text(text: str) -> dict:
+    """Extract signal block from agent output text.
+
+    Scans for ---SIGNAL--- ... ---END-SIGNAL--- delimiters.
+    Returns dict of key-value pairs.
+    Returns {"status": "UNKNOWN", "error": "..."} if not found.
+    """
+    m = re.search(
+        r"---SIGNAL---\s*\n(.+?)\n---END-SIGNAL---", text, re.DOTALL
+    )
+    if not m:
+        return {"status": "UNKNOWN", "error": "No signal block found in output"}
+    pairs: dict[str, str] = {}
+    for line in m.group(1).strip().splitlines():
+        if ":" in line:
+            key, val = line.split(":", 1)
+            pairs[key.strip()] = val.strip()
+    if "status" not in pairs:
+        pairs["status"] = "UNKNOWN"
+        pairs["error"] = "Signal block missing 'status' field"
+    return pairs
+
+
+def cmd_extract_signal(args: argparse.Namespace) -> None:
+    """Extract signal from agent output file, write to signal file."""
+    output_path = Path(args.output_file)
+    signal_path = Path(args.signal_file)
+
+    if not output_path.exists():
+        signal = {"status": "UNKNOWN", "error": f"Output file not found: {output_path}"}
+    else:
+        size = output_path.stat().st_size
+        if size > MAX_OUTPUT_FILE_BYTES:
+            # Read only last 4KB for signal extraction
+            with open(output_path, "r", encoding="utf-8", errors="replace") as f:
+                f.seek(max(0, size - 4096))
+                text = f.read()
+        else:
+            text = output_path.read_text(encoding="utf-8", errors="replace")
+        signal = _extract_signal_from_text(text)
+
+    # Write signal file
+    lines = [f"{k}: {v}" for k, v in signal.items()]
+    _atomic_write_text(signal_path, "\n".join(lines) + "\n")
+    # Also print to stdout for coordinator convenience
+    print(json.dumps(signal, ensure_ascii=False))
+
+
+def cmd_read_signal(args: argparse.Namespace) -> None:
+    """Read a signal file, output as JSON."""
+    signal_path = Path(args.signal_file)
+    if not signal_path.exists():
+        print(json.dumps({"status": "UNKNOWN", "error": f"Signal file not found: {signal_path}"}))
+        sys.exit(1)
+
+    pairs: dict[str, str] = {}
+    for line in signal_path.read_text(encoding="utf-8").strip().splitlines():
+        if ":" in line:
+            key, val = line.split(":", 1)
+            pairs[key.strip()] = val.strip()
+    print(json.dumps(pairs, ensure_ascii=False))
+
+
+# ── v3 Checklist operations ─────────────────────────────────────────────────
+
+def _parse_checklist_table(text: str) -> list[dict]:
+    """Parse the Task Board markdown table from checklist.md.
+
+    Returns list of dicts with keys: task, type, description, deps, status, worker, signal, retries
+    """
+    tasks: list[dict] = []
+    in_board = False
+    header_seen = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## Task Board"):
+            in_board = True
+            header_seen = False
+            continue
+        if in_board and stripped.startswith("##") and not stripped.startswith("## Task Board"):
+            break
+        if not in_board:
+            continue
+        if not stripped.startswith("|"):
+            continue
+        # Skip header row
+        if not header_seen:
+            header_seen = True
+            continue
+        # Skip separator row
+        if re.match(r"^\|[\s\-|]+\|$", stripped):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if len(cells) < 7:
+            continue
+        # Support both 7-col (legacy) and 8-col (v3 with retries) formats
+        retries = int(cells[7]) if len(cells) >= 8 and cells[7].isdigit() else 0
+        tasks.append({
+            "task": cells[0],
+            "type": cells[1],
+            "description": cells[2],
+            "deps": [d.strip() for d in cells[3].split(",") if d.strip() and d.strip() != "-"],
+            "status": cells[4],
+            "worker": cells[5] if cells[5] != "-" else "",
+            "signal": cells[6] if cells[6] != "-" else "",
+            "retries": retries,
+        })
+    return tasks
+
+
+def _render_checklist_table(tasks: list[dict]) -> str:
+    """Render tasks back to markdown table format."""
+    lines = [
+        "| Task | Type | Description | Deps | Status | Worker | Signal | Retries |",
+        "|------|------|------------|------|--------|--------|--------|---------|",
+    ]
+    for t in tasks:
+        deps = ",".join(t["deps"]) if t["deps"] else "-"
+        worker = t["worker"] if t["worker"] else "-"
+        signal = t["signal"] if t["signal"] else "-"
+        retries = t.get("retries", 0)
+        lines.append(f"| {t['task']} | {t['type']} | {t['description']} | {deps} | {t['status']} | {worker} | {signal} | {retries} |")
+    return "\n".join(lines)
+
+
+def cmd_checklist_status(args: argparse.Namespace) -> None:
+    """Parse checklist.md, output JSON with task counts and ready tasks."""
+    cl_path = Path(args.checklist)
+    if not cl_path.exists():
+        print(json.dumps({"error": f"Checklist not found: {cl_path}"}))
+        sys.exit(1)
+
+    text = cl_path.read_text(encoding="utf-8")
+    tasks = _parse_checklist_table(text)
+
+    counts = {"PENDING": 0, "RUNNING": 0, "DONE": 0, "FAIL": 0, "BLOCKED": 0}
+    done_ids = {t["task"] for t in tasks if t["status"] == "DONE"}
+    ready = []
+
+    for t in tasks:
+        s = t["status"]
+        counts[s] = counts.get(s, 0) + 1
+        if s == "PENDING":
+            # Check if all deps are done
+            if all(d in done_ids for d in t["deps"]):
+                ready.append(t["task"])
+
+    print(json.dumps({
+        "total": len(tasks),
+        "counts": counts,
+        "ready": ready,
+        "all_done": counts["PENDING"] == 0 and counts["RUNNING"] == 0 and counts["FAIL"] == 0,
+    }, ensure_ascii=False))
+
+
+def cmd_checklist_update(args: argparse.Namespace) -> None:
+    """Update a single task row in checklist.md."""
+    cl_path = Path(args.checklist)
+    if not cl_path.exists():
+        print(f"ERROR: Checklist not found: {cl_path}", file=sys.stderr)
+        sys.exit(1)
+
+    text = cl_path.read_text(encoding="utf-8")
+    tasks = _parse_checklist_table(text)
+
+    found = False
+    for t in tasks:
+        if t["task"] == args.task_id:
+            t["status"] = args.status
+            if args.worker:
+                t["worker"] = args.worker
+            if args.signal:
+                t["signal"] = args.signal
+            if args.retries is not None:
+                t["retries"] = int(args.retries)
+            found = True
+            break
+
+    if not found:
+        print(f"ERROR: Task {args.task_id} not found in checklist", file=sys.stderr)
+        sys.exit(1)
+
+    # Replace the Task Board section in checklist.md
+    new_table = _render_checklist_table(tasks)
+    # Find and replace the table
+    pattern = re.compile(
+        r"(## Task Board\n)" r"(\|.+\n)+",
+        re.MULTILINE,
+    )
+    new_text = pattern.sub(f"## Task Board\n{new_table}\n", text)
+    _atomic_write_text(cl_path, new_text)
+    print(json.dumps({"ok": True, "task": args.task_id, "status": args.status}))
+
+
+def cmd_next_tasks(args: argparse.Namespace) -> None:
+    """Return JSON list of tasks ready to dispatch (PENDING with deps satisfied)."""
+    cl_path = Path(args.checklist)
+    if not cl_path.exists():
+        print(json.dumps({"error": f"Checklist not found: {cl_path}"}))
+        sys.exit(1)
+
+    text = cl_path.read_text(encoding="utf-8")
+    tasks = _parse_checklist_table(text)
+
+    done_ids = {t["task"] for t in tasks if t["status"] == "DONE"}
+    ready = []
+
+    for t in tasks:
+        if t["status"] != "PENDING":
+            continue
+        if all(d in done_ids for d in t["deps"]):
+            ready.append(t)
+
+    max_batch = args.max_batch or len(ready)
+    ready = ready[:max_batch]
+
+    # Memory-based throttling
+    mem = _get_memory_info()
+    if mem.get("available_mb"):
+        safe = max(1, (mem["available_mb"] - MEM_RESERVE_MB) // WORKER_MEM_ESTIMATE_MB)
+        if safe < len(ready):
+            ready = ready[:safe]
+
+    print(json.dumps({
+        "ready": ready,
+        "count": len(ready),
+    }, ensure_ascii=False))
+
+
+def cmd_render_contract(args: argparse.Namespace) -> None:
+    """Fill a contract template with variables, output to stdout or file."""
+    template_path = Path(args.template)
+    if not template_path.exists():
+        print(f"ERROR: Template not found: {template_path}", file=sys.stderr)
+        sys.exit(1)
+
+    template = template_path.read_text(encoding="utf-8")
+
+    # Load vars from --vars-file first (lower priority)
+    replacements: dict[str, str] = {}
+    if args.vars_file:
+        vf = Path(args.vars_file)
+        if vf.exists():
+            content = vf.read_text(encoding="utf-8").strip()
+            if content.startswith("{"):
+                # JSON format
+                for k, v in json.loads(content).items():
+                    replacements[k] = str(v)
+            else:
+                # KEY=VALUE per line
+                for line in content.splitlines():
+                    line = line.strip()
+                    if "=" in line and not line.startswith("#"):
+                        key, val = line.split("=", 1)
+                        replacements[key.strip()] = val.strip()
+
+    # Then override with --vars CLI args (higher priority)
+    if args.vars:
+        for item in args.vars:
+            if "=" not in item:
+                print(f"ERROR: Invalid var format '{item}', expected KEY=VALUE", file=sys.stderr)
+                sys.exit(1)
+            key, val = item.split("=", 1)
+            replacements[key.strip()] = val.strip()
+
+    # Perform substitution
+    result = template
+    for key, val in replacements.items():
+        result = result.replace("{{" + key + "}}", val)
+
+    # Write to file or stdout
+    if args.output:
+        out_path = Path(args.output)
+        _atomic_write_text(out_path, result)
+        print(json.dumps({"ok": True, "output": str(out_path)}))
+    else:
+        print(result)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="orch", description="clco orchestrator CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1462,6 +1754,35 @@ def main() -> None:
     p_tasks.add_argument("--note", help="Note to attach (for update)")
     p_tasks.add_argument("--force", action="store_true", help="Force overwrite (for init)")
 
+    # ── v3 subcommands ────────────────────────────────────────────────────
+    p_extract = sub.add_parser("extract-signal", help="Extract signal from agent output file")
+    p_extract.add_argument("output_file", help="Path to agent output file")
+    p_extract.add_argument("signal_file", help="Path to write signal file")
+
+    p_read_sig = sub.add_parser("read-signal", help="Read signal file as JSON")
+    p_read_sig.add_argument("signal_file", help="Path to signal file")
+
+    p_cl_status = sub.add_parser("checklist-status", help="Parse checklist.md, output JSON summary")
+    p_cl_status.add_argument("checklist", help="Path to checklist.md")
+
+    p_cl_update = sub.add_parser("checklist-update", help="Update a task row in checklist.md")
+    p_cl_update.add_argument("checklist", help="Path to checklist.md")
+    p_cl_update.add_argument("task_id", help="Task ID (e.g. T3)")
+    p_cl_update.add_argument("status", choices=["PENDING", "RUNNING", "DONE", "FAIL", "BLOCKED"])
+    p_cl_update.add_argument("--worker", default=None, help="Worker name")
+    p_cl_update.add_argument("--signal", default=None, help="Signal file path")
+    p_cl_update.add_argument("--retries", default=None, type=int, help="Retry count")
+
+    p_next = sub.add_parser("next-tasks", help="List tasks ready to dispatch")
+    p_next.add_argument("checklist", help="Path to checklist.md")
+    p_next.add_argument("--max-batch", type=int, default=None, help="Max tasks to return")
+
+    p_render = sub.add_parser("render-contract", help="Fill contract template with variables")
+    p_render.add_argument("template", help="Path to contract template")
+    p_render.add_argument("--vars", nargs="*", help="KEY=VALUE pairs")
+    p_render.add_argument("--vars-file", default=None, help="File with variables (JSON or KEY=VALUE per line)")
+    p_render.add_argument("--output", default=None, help="Output file (default: stdout)")
+
     p_cleanup = sub.add_parser("cleanup", help="Clean up old run directories")
     p_cleanup.add_argument(
         "--workspace", default=os.getcwd(), help="Project workspace root"
@@ -1494,6 +1815,13 @@ def main() -> None:
         "load-checkpoint": cmd_load_checkpoint,
         "tasks": cmd_tasks,
         "cleanup": cmd_cleanup,
+        # v3
+        "extract-signal": cmd_extract_signal,
+        "read-signal": cmd_read_signal,
+        "checklist-status": cmd_checklist_status,
+        "checklist-update": cmd_checklist_update,
+        "next-tasks": cmd_next_tasks,
+        "render-contract": cmd_render_contract,
     }
     cmds[args.command](args)
 

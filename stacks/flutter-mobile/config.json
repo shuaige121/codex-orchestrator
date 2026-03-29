@@ -1,0 +1,12 @@
+{
+  "name": "Flutter Mobile",
+  "category": "mobile",
+  "language": "dart",
+  "toolchain": {
+    "lint": "/snap/bin/flutter analyze",
+    "format": "/snap/bin/dart format lib/",
+    "test": "/snap/bin/flutter test",
+    "build": "/snap/bin/flutter build web"
+  },
+  "install_tools": "echo 'Flutter SDK pre-installed via snap at /snap/bin/flutter'"
+}
